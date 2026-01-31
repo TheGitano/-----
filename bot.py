@@ -163,37 +163,102 @@ async def actualizar_mensaje_fijado(context: ContextTypes.DEFAULT_TYPE):
 
 async def escanear_canal_completo(context: ContextTypes.DEFAULT_TYPE):
     """Escanea todo el historial del canal para organizar contenido existente"""
-    logger.info("Iniciando escaneo completo del canal...")
+    logger.info("🔍 Iniciando escaneo completo del canal...")
     
     try:
-        # Obtener información del chat
         chat = await context.bot.get_chat(CHANNEL_ID)
-        logger.info(f"Escaneando canal: {chat.title}")
+        logger.info(f"📢 Escaneando canal: {chat.title}")
         
-        # Telegram no permite obtener todo el historial directamente
-        # Intentamos desde mensaje 1 hasta un número alto
+        # Intentar obtener mensajes desde el más reciente hacia atrás
         mensaje_count = 0
-        for i in range(1, 10000):  # Ajusta según tu canal
+        errores_consecutivos = 0
+        max_errores = 50  # Si hay 50 errores seguidos, paramos
+        
+        # Empezar desde un ID alto y bajar
+        # El ID más reciente debería ser el último mensaje que recibimos
+        mensaje_id_actual = 10000  # Ajusta según tu canal
+        
+        while errores_consecutivos < max_errores and mensaje_id_actual > 0:
             try:
-                # Intentar reenviar el mensaje al bot (método indirecto)
-                # Como no podemos hacer forward, usamos copy_message
-                msg = await context.bot.copy_message(
-                    chat_id=CHANNEL_ID,
+                # Intentar obtener info del mensaje usando forward temporal
+                msg = await context.bot.forward_message(
+                    chat_id=CHANNEL_ID,  # Reenviamos al mismo canal
                     from_chat_id=CHANNEL_ID,
-                    message_id=i
+                    message_id=mensaje_id_actual
                 )
-                # Eliminar el mensaje copiado inmediatamente
+                
+                # Procesar el mensaje
+                if msg.document or msg.video:
+                    nombre = None
+                    tipo = None
+                    
+                    if msg.document:
+                        nombre = msg.document.file_name
+                        if nombre.lower().endswith('.apk'):
+                            tipo = 'apk'
+                        elif nombre.lower().endswith('.exe'):
+                            tipo = 'exe'
+                        elif nombre.lower().endswith('.html'):
+                            tipo = 'html'
+                        else:
+                            tipo = 'otro'
+                    elif msg.video:
+                        nombre = msg.caption or msg.video.file_name or "Video sin título"
+                        tipo = 'pelicula'
+                    
+                    if nombre and tipo:
+                        nombre_limpio = limpiar_nombre(nombre)
+                        data = {
+                            'nombre': nombre_limpio,
+                            'original': nombre,
+                            'fecha': datetime.now().strftime('%d/%m/%Y')
+                        }
+                        
+                        if tipo == 'pelicula':
+                            genero = detectar_genero(nombre_limpio)
+                            data['genero'] = genero
+                            peliculas[mensaje_id_actual] = data
+                            mensaje_count += 1
+                        elif tipo == 'apk':
+                            apks[mensaje_id_actual] = data
+                            mensaje_count += 1
+                        elif tipo == 'exe':
+                            exes[mensaje_id_actual] = data
+                            mensaje_count += 1
+                        elif tipo == 'html':
+                            htmls[mensaje_id_actual] = data
+                            mensaje_count += 1
+                        else:
+                            otros[mensaje_id_actual] = data
+                            mensaje_count += 1
+                
+                # Eliminar el mensaje reenviado
                 await context.bot.delete_message(
                     chat_id=CHANNEL_ID,
                     message_id=msg.message_id
                 )
-                mensaje_count += 1
-            except Exception:
-                continue
+                
+                errores_consecutivos = 0  # Resetear contador
+                
+            except Exception as e:
+                errores_consecutivos += 1
+            
+            mensaje_id_actual -= 1
+            
+            # Log cada 100 mensajes
+            if mensaje_id_actual % 100 == 0:
+                logger.info(f"📊 Escaneados hasta mensaje ID: {mensaje_id_actual}, encontrados: {mensaje_count}")
         
-        logger.info(f"Escaneo completado. Mensajes encontrados: {mensaje_count}")
+        logger.info(f"✅ Escaneo completado. Total encontrados: {mensaje_count}")
+        logger.info(f"🎬 Películas: {len(peliculas)}, 📱 APKs: {len(apks)}, 💻 EXEs: {len(exes)}, 🌐 HTMLs: {len(htmls)}")
+        
+        # Crear mensaje fijado con todo lo encontrado
+        if mensaje_count > 0:
+            await actualizar_mensaje_fijado(context)
+            logger.info("📌 Mensaje fijado creado con contenido existente")
+        
     except Exception as e:
-        logger.error(f"Error en escaneo completo: {e}")
+        logger.error(f"❌ Error en escaneo completo: {e}")
 
 async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Procesa cada mensaje nuevo en el canal"""
@@ -269,9 +334,10 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(application: Application):
     """Se ejecuta después de iniciar el bot"""
-    logger.info("Bot iniciado correctamente")
-    # Escanear canal al iniciar (comentado por ahora, activar si es necesario)
-    # await escanear_canal_completo(application)
+    logger.info("🚀 Bot iniciado correctamente")
+    logger.info("🔄 Iniciando escaneo del canal para organizar contenido existente...")
+    # Escanear canal al iniciar
+    await escanear_canal_completo(application)
 
 def main():
     """Función principal"""
