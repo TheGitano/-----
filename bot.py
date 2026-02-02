@@ -169,100 +169,40 @@ async def escanear_canal_completo(context: ContextTypes.DEFAULT_TYPE):
         chat = await context.bot.get_chat(CHANNEL_ID)
         logger.info(f"📢 Escaneando canal: {chat.title}")
         
-        # Intentar obtener mensajes desde el más reciente hacia atrás
-        mensaje_count = 0
-        errores_consecutivos = 0
-        max_errores = 50  # Si hay 50 errores seguidos, paramos
+        # NOTA: Telegram no permite obtener historial completo directamente desde bots
+        # El bot organizará contenido NUEVO desde ahora
+        # Para organizar contenido EXISTENTE, hay que usar un método alternativo
         
-        # Empezar desde un ID alto y bajar
-        # El ID más reciente debería ser el último mensaje que recibimos
-        mensaje_id_actual = 10000  # Ajusta según tu canal
+        logger.info("⚠️ IMPORTANTE: El bot está listo para organizar contenido NUEVO")
+        logger.info("📝 Para organizar contenido EXISTENTE, usa uno de estos métodos:")
+        logger.info("   1. Edita cada mensaje del canal (agrega/quita un espacio)")
+        logger.info("   2. O espera - el bot irá organizando conforme agregues contenido nuevo")
         
-        while errores_consecutivos < max_errores and mensaje_id_actual > 0:
-            try:
-                # Intentar obtener info del mensaje usando forward temporal
-                msg = await context.bot.forward_message(
-                    chat_id=CHANNEL_ID,  # Reenviamos al mismo canal
-                    from_chat_id=CHANNEL_ID,
-                    message_id=mensaje_id_actual
-                )
-                
-                # Procesar el mensaje
-                if msg.document or msg.video:
-                    nombre = None
-                    tipo = None
-                    
-                    if msg.document:
-                        nombre = msg.document.file_name
-                        if nombre.lower().endswith('.apk'):
-                            tipo = 'apk'
-                        elif nombre.lower().endswith('.exe'):
-                            tipo = 'exe'
-                        elif nombre.lower().endswith('.html'):
-                            tipo = 'html'
-                        else:
-                            tipo = 'otro'
-                    elif msg.video:
-                        nombre = msg.caption or msg.video.file_name or "Video sin título"
-                        tipo = 'pelicula'
-                    
-                    if nombre and tipo:
-                        nombre_limpio = limpiar_nombre(nombre)
-                        data = {
-                            'nombre': nombre_limpio,
-                            'original': nombre,
-                            'fecha': datetime.now().strftime('%d/%m/%Y')
-                        }
-                        
-                        if tipo == 'pelicula':
-                            genero = detectar_genero(nombre_limpio)
-                            data['genero'] = genero
-                            peliculas[mensaje_id_actual] = data
-                            mensaje_count += 1
-                        elif tipo == 'apk':
-                            apks[mensaje_id_actual] = data
-                            mensaje_count += 1
-                        elif tipo == 'exe':
-                            exes[mensaje_id_actual] = data
-                            mensaje_count += 1
-                        elif tipo == 'html':
-                            htmls[mensaje_id_actual] = data
-                            mensaje_count += 1
-                        else:
-                            otros[mensaje_id_actual] = data
-                            mensaje_count += 1
-                
-                # Eliminar el mensaje reenviado
-                await context.bot.delete_message(
-                    chat_id=CHANNEL_ID,
-                    message_id=msg.message_id
-                )
-                
-                errores_consecutivos = 0  # Resetear contador
-                
-            except Exception as e:
-                errores_consecutivos += 1
-            
-            mensaje_id_actual -= 1
-            
-            # Log cada 100 mensajes
-            if mensaje_id_actual % 100 == 0:
-                logger.info(f"📊 Escaneados hasta mensaje ID: {mensaje_id_actual}, encontrados: {mensaje_count}")
+        # Enviar mensaje informativo al canal
+        try:
+            msg = await context.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text="🤖 **Bot Organizador Activado**\n\n"
+                     "✅ El bot está funcionando correctamente\n"
+                     "📂 Organizará automáticamente todo el contenido nuevo que subas\n"
+                     "🎬 Películas | 📱 APKs | 💻 EXEs | 🌐 HTMLs\n\n"
+                     "💡 *Nota: Para organizar contenido anterior, edita los mensajes antiguos*",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            # Eliminar el mensaje después de 60 segundos
+            await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=msg.message_id)
+        except Exception:
+            pass
         
-        logger.info(f"✅ Escaneo completado. Total encontrados: {mensaje_count}")
-        logger.info(f"🎬 Películas: {len(peliculas)}, 📱 APKs: {len(apks)}, 💻 EXEs: {len(exes)}, 🌐 HTMLs: {len(htmls)}")
-        
-        # Crear mensaje fijado con todo lo encontrado
-        if mensaje_count > 0:
-            await actualizar_mensaje_fijado(context)
-            logger.info("📌 Mensaje fijado creado con contenido existente")
+        logger.info("✅ Bot listo para organizar contenido")
         
     except Exception as e:
-        logger.error(f"❌ Error en escaneo completo: {e}")
+        logger.error(f"❌ Error en escaneo: {e}")
 
 async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Procesa cada mensaje nuevo en el canal"""
-    message = update.channel_post or update.message
+    """Procesa cada mensaje nuevo o editado en el canal"""
+    # Detectar si es mensaje nuevo o editado
+    message = update.channel_post or update.edited_channel_post or update.message
     
     if not message:
         return
@@ -346,14 +286,16 @@ def main():
     # Crear aplicación
     application = Application.builder().token(TOKEN).post_init(post_init).build()
     
-    # Handlers para mensajes del canal
+    # Handler para mensajes NUEVOS del canal
     application.add_handler(MessageHandler(
         filters.ChatType.CHANNEL & (filters.Document.ALL | filters.VIDEO),
         procesar_mensaje
     ))
     
-    # Iniciar bot
+    # Iniciar bot (allowed_updates incluirá edited_channel_post automáticamente)
     logger.info("Bot en ejecución...")
+    logger.info("✅ Detecta mensajes NUEVOS y EDITADOS")
+    logger.info("💡 TIP: Para organizar contenido existente, edita los mensajes antiguos del canal")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
